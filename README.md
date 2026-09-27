@@ -20,9 +20,16 @@ python3 app.py --db pharmacovigilance.db
 - `GET /api/cases`、`GET /api/cases/{id}`：按权限查询。
 - `POST /api/cases/{id}/followups`：用 `expected_revision` 防止覆盖随访。
 - `POST /api/cases/{id}/medical-review`：医学审核员更新严重性、死亡和关联性。
-- `POST /api/cases/{id}/reports`、`POST /api/reports/{id}/submit`：生成并提交分国家报告。
+- `POST /api/cases/{id}/reports`、`POST /api/reports/{id}/submit`：生成并提交分国家报告，提交后进入待回执。
+- `POST /api/reports/{id}/receipts`：登记监管回执。`outcome=accepted` 需 `authority_ref`（监管编号），受理后报告完成并锁定；`outcome=rejected` 需 `reason`（退件原因）和 `correction_due_at`（补件期限），报告回到待更正，修正后重提同一国家。
+- `GET /api/reports/{id}`：报告的历次提交与回执记录。
+- `GET /api/receipts/overdue`：已提交但超过回执期限未收到结果的报告，按区域过滤。
 - `POST /api/cases/{id}/merge`：全局管理员合并重复案例。
 - `POST /api/escalate-overdue`、`GET /api/overdue`：逾期检查与升级。
+
+## 报告状态流转
+
+`pending`/`overdue` → 提交 → `awaiting_receipt`（待回执）→ 受理 → `accepted`（完成并锁定内容）；退件 → `correction_pending`（待更正）→ 重提 → `awaiting_receipt`。回执判定（`ReceiptPolicy` 纯状态机）、数据记录（`submissions`/`receipts` 表）与页面操作（`static/index.html`）分层实现。
 
 ## 测试
 

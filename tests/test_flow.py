@@ -40,7 +40,7 @@ class PharmacovigilanceFlowTest(unittest.TestCase):
         self.assertEqual(reviewed["case"]["revision"], 3)
         report = self.svc.create_report(case["id"], "lead-cn", "regional_lead", "CN", {"country": "CN"})
         submitted = self.svc.submit_report(report["id"], "lead-cn", "regional_lead", "CN", {})
-        self.assertEqual(submitted["report"]["status"], "submitted")
+        self.assertEqual(submitted["report"]["status"], "awaiting_receipt")
         duplicate = self.svc.create_case(
             "reporter-b", "reporter", "CN",
             {"patient_ref": "P-1", "region": "CN", "product": "DrugA", "event_term": "肝损伤",
