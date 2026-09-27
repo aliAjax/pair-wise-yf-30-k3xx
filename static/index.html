@@ -1,5 +1,103 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>药物警戒案例台</title>
-<style>body{font:15px system-ui;max-width:1080px;margin:40px auto;padding:0 20px;background:#f5f7fa;color:#172033}section{background:white;padding:20px;margin:16px 0;border-radius:12px;box-shadow:0 2px 12px #0001}input,textarea,button{font:inherit;padding:8px;margin:4px}input,textarea{width:70%}button{background:#174ea6;color:white;border:0;border-radius:6px}pre{background:#111827;color:#d1fae5;padding:14px;overflow:auto}</style>
-<h1>药物警戒案例台</h1><p>标准库 JSON API 概览。请求需带 X-User-Id、X-Role；区域角色还需 X-Region。</p>
-<section><h2>快速查看</h2><input id="user" value="global-admin"><input id="role" value="global_admin"><button onclick="load()">刷新案例</button><pre id="out"></pre></section>
-<script>async function load(){let h={'X-User-Id':user.value,'X-Role':role.value};let r=await fetch('/api/state',{headers:h});out.textContent=JSON.stringify(await r.json(),null,2)}load()</script>
+<style>
+body{font:15px system-ui;max-width:1080px;margin:40px auto;padding:0 20px;background:#f5f7fa;color:#172033}
+section{background:white;padding:20px;margin:16px 0;border-radius:12px;box-shadow:0 2px 12px #0001}
+input,textarea,select,button{font:inherit;padding:8px;margin:4px}
+input,textarea{width:70%}
+button{background:#174ea6;color:white;border:0;border-radius:6px;cursor:pointer}
+pre{background:#111827;color:#d1fae5;padding:14px;overflow:auto}
+table{border-collapse:collapse;width:100%;margin:8px 0}
+td,th{border:1px solid #e2e8f0;padding:6px 8px;text-align:left}
+.alert{background:#fef2f2;border-left:4px solid #dc2626;padding:10px 14px;margin:8px 0;border-radius:6px}
+.alert.receipt{background:#fffbeb;border-left-color:#d97706}
+.muted{color:#64748b}
+#msg{white-space:pre-wrap;margin-top:8px}
+</style>
+<h1>药物警戒案例台</h1>
+<section>
+<h2>身份</h2>
+<input id="user" value="lead-cn" placeholder="X-User-Id">
+<select id="role"><option value="regional_lead">regional_lead</option><option value="reporter">reporter</option><option value="medical_reviewer">medical_reviewer</option><option value="global_admin">global_admin</option></select>
+<input id="region" value="CN" placeholder="X-Region（区域角色必填）">
+<button onclick="refresh()">刷新</button>
+<div id="msg" class="muted"></div>
+</section>
+<section><h2>提醒</h2><div id="reminder-box"></div></section>
+<section><h2>提交报告（提交后进入待回执）</h2>
+<input id="submit-report-id" placeholder="报告 ID">
+<input id="submit-receipt-due" placeholder="期望回执期限 ISO 时间，可空（默认提交后 30 天）">
+<button onclick="submitReport()">提交报告</button></section>
+<section><h2>登记监管回执</h2>
+<input id="receipt-report-id" placeholder="报告 ID">
+<select id="receipt-decision"><option value="accepted">受理</option><option value="rejected">退件</option></select>
+<input id="receipt-regulator-ref" placeholder="监管编号（受理必填）">
+<input id="receipt-decided-at" placeholder="受理/退件时间 ISO，可空（默认当前时间）">
+<input id="receipt-reason" placeholder="退件原因（退件必填）">
+<input id="receipt-correction-due" placeholder="补件期限 ISO（退件必填）">
+<button onclick="recordReceipt()">登记回执</button></section>
+<section><h2>退件补件重提（重提给同一国家）</h2>
+<input id="resubmit-report-id" placeholder="报告 ID">
+<input id="resubmit-note" placeholder="修正说明（必填）">
+<button onclick="resubmitReport()">补件重提</button></section>
+<section><h2>报告与回执记录</h2>
+<input id="detail-report-id" placeholder="报告 ID">
+<button onclick="showReport()">查询</button>
+<div id="report-detail"></div></section>
+<section><h2>案例</h2><pre id="out"></pre></section>
+<script>
+const $=id=>document.getElementById(id);
+const LABEL={pending:'待提交',overdue:'逾期未提交',submitted:'待回执',accepted:'已完成·已受理锁定',correction_pending:'退件待更正'};
+function headers(){const h={'X-User-Id':$('user').value,'X-Role':$('role').value,'Content-Type':'application/json'};if($('region').value)h['X-Region']=$('region').value;return h}
+async function api(path,method,body){const r=await fetch(path,{method,headers:headers(),body:body?JSON.stringify(body):undefined});const j=await r.json();if(!r.ok)throw new Error(j.message||('HTTP '+r.status));return j}
+async function run(fn){try{await fn()}catch(e){$('msg').textContent='操作失败：'+e.message}}
+function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function val(id){const v=$(id).value.trim();return v||undefined}
+async function refresh(){await run(async()=>{$('msg').textContent='';const s=await api('/api/state','GET');renderReminders(s);$('out').textContent=JSON.stringify(s.cases,null,2)})}
+function renderReminders(s){
+  let html='';
+  if(s.overdue_receipts&&s.overdue_receipts.length){
+    html+='<h3>回执逾期：已提交但到期未收到监管结果</h3>';
+    for(const r of s.overdue_receipts)html+=`<div class="alert receipt">报告 #${r.id}（案例 ${esc(r.case_no)}，国家 ${esc(r.country)}）等待回执已超过期限 ${esc(r.receipt_due_at)}，请跟进监管答复并登记回执。</div>`;
+  }
+  if(s.overdue&&s.overdue.length){
+    html+='<h3>提交逾期</h3>';
+    for(const r of s.overdue)html+=`<div class="alert">报告 #${r.id}（国家 ${esc(r.country)}）提交期限 ${esc(r.due_at)} 已过，当前状态：${LABEL[r.status]||r.status}。</div>`;
+  }
+  $('reminder-box').innerHTML=html||'<p class="muted">暂无提醒</p>';
+}
+async function submitReport(){await run(async()=>{
+  const id=val('submit-report-id');
+  const r=await api(`/api/reports/${id}/submit`,'POST',{receipt_due_at:val('submit-receipt-due')});
+  $('msg').textContent=`报告 #${id} 已提交，进入待回执，回执期限 ${r.report.receipt_due_at}`;
+  await refresh();
+})}
+async function recordReceipt(){await run(async()=>{
+  const id=val('receipt-report-id');
+  const r=await api(`/api/reports/${id}/receipt`,'POST',{decision:$('receipt-decision').value,regulator_ref:val('receipt-regulator-ref'),decided_at:val('receipt-decided-at'),reason:val('receipt-reason'),correction_due_at:val('receipt-correction-due')});
+  $('msg').textContent=r.decision==='accepted'
+    ?`报告 #${id} 已受理，监管编号 ${r.report.regulator_ref}，报告完成并锁定`
+    :`报告 #${id} 已退件，进入待更正，补件期限 ${r.report.correction_due_at}`;
+  await refresh();
+})}
+async function resubmitReport(){await run(async()=>{
+  const id=val('resubmit-report-id');
+  const r=await api(`/api/reports/${id}/resubmit`,'POST',{correction_note:val('resubmit-note')});
+  $('msg').textContent=`报告 #${id} 已补件重提（第 ${r.attempt} 次提交），重新进入待回执${r.correction_late?'，注意：已超过补件期限':''}`;
+  await refresh();
+})}
+async function showReport(){await run(async()=>{
+  const id=val('detail-report-id');
+  const d=await api(`/api/reports/${id}`,'GET');
+  const r=d.report;
+  let html=`<p>报告 #${r.id}｜案例 ${esc(r.case_no)}｜国家 ${esc(r.country)}｜状态 <b>${LABEL[r.status]||r.status}</b>`;
+  if(r.regulator_ref)html+=`｜监管编号 ${esc(r.regulator_ref)}（受理时间 ${esc(r.accepted_at)}）`;
+  if(r.rejection_reason)html+=`｜退件原因 ${esc(r.rejection_reason)}（补件期限 ${esc(r.correction_due_at)}）`;
+  html+='</p><h3>提交记录</h3><table><tr><th>次数</th><th>提交时间</th><th>提交人</th><th>逾期</th><th>修正说明</th></tr>';
+  for(const s of d.submissions)html+=`<tr><td>${s.attempt}</td><td>${esc(s.submitted_at)}</td><td>${esc(s.submitted_by)}</td><td>${s.late?'是':'否'}</td><td>${esc(s.note||'')}</td></tr>`;
+  html+='</table><h3>回执记录</h3><table><tr><th>时间</th><th>结论</th><th>监管编号</th><th>退件原因</th><th>补件期限</th><th>登记人</th></tr>';
+  for(const c of d.receipts)html+=`<tr><td>${esc(c.decided_at)}</td><td>${c.decision==='accepted'?'受理':'退件'}</td><td>${esc(c.regulator_ref||'')}</td><td>${esc(c.reason||'')}</td><td>${esc(c.correction_due_at||'')}</td><td>${esc(c.recorded_by)}</td></tr>`;
+  html+='</table>';
+  $('report-detail').innerHTML=html;
+})}
+refresh()
+</script>
